@@ -1,1 +1,6 @@
 pathlib
+opencv-python>=4.5.0
+av>=10.0.0
+Pillow>=9.0.0
+torch>=1.9.0
+numpy>=1.19.0

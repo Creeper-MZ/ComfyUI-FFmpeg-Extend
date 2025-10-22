@@ -9,13 +9,18 @@ import gc
 import shutil
 import time
 import glob
+import base64
+import io
+import tempfile
+import cv2
+import av
 from itertools import islice
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from comfy.model_management import unload_all_models, soft_empty_cache
 
 def get_xfade_transitions():
     try:
-        #执行命令：ffmpeg -hide_banner -h filter=xfade 查看可用的转场效果，执行ffmpeg命令获取xfade过滤器帮助信息
+        # 获取FFmpeg xfade过滤器支持的转场列表
         result = subprocess.run(
             ['ffmpeg', '-hide_banner', '-h', 'filter=xfade'],
             capture_output=True,
@@ -223,3 +228,469 @@ def clear_memory():
     gc.collect()
     unload_all_models()
     soft_empty_cache()
+
+def get_video_info_from_bytes(video_bytes):
+    """
+    从视频二进制数据中提取视频信息（fps、宽高、时长等）
+    使用OpenCV和PyAV处理，避免磁盘持久化
+
+    Args:
+        video_bytes: 视频的二进制数据
+
+    Returns:
+        dict: 包含 fps, width, height, duration 的字典
+    """
+    try:
+        # 创建临时文件用于OpenCV读取
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+            tmp.write(video_bytes)
+            tmp_path = tmp.name
+
+        try:
+            # 使用OpenCV获取视频信息
+            cap = cv2.VideoCapture(tmp_path)
+
+            if not cap.isOpened():
+                raise ValueError("Unable to open video file")
+
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = frame_count / fps if fps > 0 else 0
+
+            cap.release()
+
+            return {
+                'fps': fps,
+                'width': width,
+                'height': height,
+                'duration': duration,
+                'frame_count': frame_count
+            }
+        finally:
+            # 删除临时文件
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+    except Exception as e:
+        raise ValueError(f"Failed to get video info from bytes: {e}")
+
+def extract_frames_from_bytes(video_bytes, output_dir, fps_scale=None):
+    """
+    从视频二进制数据中提取帧到指定目录（使用OpenCV）
+
+    Args:
+        video_bytes: 视频的二进制数据
+        output_dir: 输出帧的目录
+        fps_scale: 缩放因子 (可选)
+
+    Returns:
+        tuple: (帧数, fps, 宽度, 高度)
+    """
+    try:
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+            tmp.write(video_bytes)
+            tmp_path = tmp.name
+
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+
+            # 使用OpenCV打开视频
+            cap = cv2.VideoCapture(tmp_path)
+
+            if not cap.isOpened():
+                raise ValueError("Unable to open video file")
+
+            # 获取视频信息
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            # 计算缩放后的尺寸
+            if fps_scale and fps_scale > 0 and fps_scale != 1.0:
+                scaled_width = int(width * fps_scale)
+                scaled_height = int(height * fps_scale)
+            else:
+                scaled_width = width
+                scaled_height = height
+
+            # 逐帧读取并保存
+            frame_count = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # 缩放帧（如果需要）
+                if fps_scale and fps_scale != 1.0:
+                    frame = cv2.resize(frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LINEAR)
+
+                # 转换BGR到RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # 保存为PNG
+                frame_path = os.path.join(output_dir, f'frame_{frame_count:08d}.png')
+                pil_image = Image.fromarray(frame_rgb)
+                pil_image.save(frame_path)
+
+                frame_count += 1
+
+            cap.release()
+
+            return frame_count, fps, scaled_width, scaled_height
+        finally:
+            # 删除临时文件
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+    except Exception as e:
+        raise ValueError(f"Failed to extract frames from bytes: {e}")
+
+def pack_images_to_video_bytes(images, fps, output_format='mp4'):
+    """
+    将IMAGE张量打包为视频二进制数据（使用OpenCV）
+
+    Args:
+        images: PyTorch张量 shape (batch, height, width, channels)
+        fps: 帧率
+        output_format: 输出格式 ('mp4', 'avi', 等)
+
+    Returns:
+        bytes: 视频二进制数据
+    """
+    try:
+        # 创建临时文件用于存储视频
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{output_format}') as tmp:
+            output_file = tmp.name
+
+        try:
+            height = images.shape[1]
+            width = images.shape[2]
+
+            # 选择编码器
+            if output_format == 'mp4':
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            elif output_format == 'avi':
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            elif output_format == 'mov':
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            else:
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
+            # 创建视频写入器
+            out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+
+            if not out.isOpened():
+                raise ValueError(f"Failed to create video writer for format: {output_format}")
+
+            # 逐帧写入
+            for i in range(images.shape[0]):
+                # 获取单个帧
+                frame_tensor = images[i:i+1]  # shape: (1, height, width, channels)
+
+                # 转换为PIL Image，然后转为numpy数组
+                frame_pil = tensor2pil(frame_tensor)
+                frame_np = np.array(frame_pil)  # RGB格式
+
+                # 转换RGB到BGR（OpenCV使用BGR）
+                frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+
+                # 写入帧
+                out.write(frame_bgr)
+
+            out.release()
+
+            # 读取生成的视频文件为字节
+            with open(output_file, 'rb') as f:
+                video_bytes = f.read()
+
+            return video_bytes
+        finally:
+            # 删除临时文件
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except:
+                    pass
+    except Exception as e:
+        raise ValueError(f"Failed to pack images to video bytes: {e}")
+
+def extract_audio_from_bytes(video_bytes, audio_format='mp3'):
+    """
+    从视频二进制数据中提取音频（使用PyAV）
+
+    Args:
+        video_bytes: 视频的二进制数据
+        audio_format: 音频格式 ('mp3', 'aac', 'wav', 等)
+
+    Returns:
+        bytes: 音频二进制数据
+    """
+    try:
+        # 创建临时输入视频文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_video:
+            tmp_video.write(video_bytes)
+            tmp_video_path = tmp_video.name
+
+        # 创建临时输出音频文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{audio_format}') as tmp_audio:
+            tmp_audio_path = tmp_audio.name
+
+        try:
+            # 使用PyAV打开视频并提取音频
+            input_container = av.open(tmp_video_path)
+
+            if not input_container.audio:
+                raise ValueError("Video has no audio stream")
+
+            # 确定输出格式和编码器
+            if audio_format == 'mp3':
+                codec_name = 'libmp3lame'
+            elif audio_format == 'aac':
+                codec_name = 'aac'
+            elif audio_format == 'wav':
+                codec_name = 'pcm_s16le'
+            else:
+                codec_name = 'libmp3lame'  # 默认为mp3
+
+            # 创建输出容器
+            output_container = av.open(tmp_audio_path, 'w')
+
+            # 添加音频流
+            audio_stream = input_container.audio[0]
+            out_stream = output_container.add_stream(codec_name, rate=audio_stream.sample_rate)
+
+            # 复制音频帧
+            for frame in input_container.decode(audio=0):
+                for packet in out_stream.encode(frame):
+                    output_container.mux(packet)
+
+            # 刷新缓冲区
+            for packet in out_stream.encode():
+                output_container.mux(packet)
+
+            input_container.close()
+            output_container.close()
+
+            # 读取音频文件为字节
+            with open(tmp_audio_path, 'rb') as f:
+                audio_bytes = f.read()
+
+            return audio_bytes
+        finally:
+            # 清理临时文件
+            if os.path.exists(tmp_video_path):
+                try:
+                    os.remove(tmp_video_path)
+                except:
+                    pass
+            if os.path.exists(tmp_audio_path):
+                try:
+                    os.remove(tmp_audio_path)
+                except:
+                    pass
+    except Exception as e:
+        raise ValueError(f"Failed to extract audio from bytes: {e}")
+
+def add_watermark_to_video_bytes(video_bytes, watermark_image, watermark_width, position_x, position_y):
+    """
+    给视频二进制数据添加图片水印（使用OpenCV）
+
+    Args:
+        video_bytes: 视频的二进制数据
+        watermark_image: 水印图片（PIL Image对象或路径）
+        watermark_width: 水印宽度
+        position_x: 水印X位置
+        position_y: 水印Y位置
+
+    Returns:
+        bytes: 添加水印后的视频二进制数据
+    """
+    try:
+        # 处理水印图片，转换为numpy数组
+        if isinstance(watermark_image, str):
+            if not os.path.exists(watermark_image):
+                raise ValueError(f"Watermark image not found: {watermark_image}")
+            watermark_pil = Image.open(watermark_image).convert('RGBA')
+        elif isinstance(watermark_image, Image.Image):
+            watermark_pil = watermark_image.convert('RGBA')
+        else:
+            raise ValueError("Watermark image must be a file path or PIL Image")
+
+        # 创建临时输入视频文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_video:
+            tmp_video.write(video_bytes)
+            tmp_video_path = tmp_video.name
+
+        # 创建临时输出视频文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_output:
+            output_path = tmp_output.name
+
+        try:
+            # 打开输入视频
+            cap = cv2.VideoCapture(tmp_video_path)
+
+            if not cap.isOpened():
+                raise ValueError("Unable to open video file")
+
+            # 获取视频参数
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            # 计算水印尺寸（按比例缩放）
+            wm_pil = watermark_pil
+            wm_w, wm_h = wm_pil.size
+            wm_h_scaled = int(wm_h * watermark_width / wm_w)
+            wm_pil = wm_pil.resize((watermark_width, wm_h_scaled), Image.Resampling.LANCZOS)
+
+            # 转换为numpy数组
+            watermark_np = np.array(wm_pil)
+
+            # 创建视频写入器
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+            if not out.isOpened():
+                raise ValueError("Failed to create video writer")
+
+            # 逐帧处理和写入
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # 添加水印
+                frame = add_watermark_to_frame(frame, watermark_np, position_x, position_y)
+
+                # 写入帧
+                out.write(frame)
+
+            cap.release()
+            out.release()
+
+            # 读取输出视频文件为字节
+            with open(output_path, 'rb') as f:
+                output_bytes = f.read()
+
+            return output_bytes
+        finally:
+            # 清理临时文件
+            if os.path.exists(tmp_video_path):
+                try:
+                    os.remove(tmp_video_path)
+                except:
+                    pass
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except:
+                    pass
+    except Exception as e:
+        raise ValueError(f"Failed to add watermark to video: {e}")
+
+def get_video_bytes_from_input(video_input):
+    """
+    兼容处理视频输入 - 支持文件路径字符串或VideoData对象
+
+    Args:
+        video_input: 文件路径字符串或VideoData对象
+
+    Returns:
+        bytes: 视频二进制数据
+    """
+    from .video_types import VideoData
+
+    if isinstance(video_input, VideoData):
+        return video_input.to_bytes()
+    elif isinstance(video_input, str):
+        # 如果是文件路径，读取文件内容
+        if not os.path.exists(video_input):
+            raise ValueError(f"Video file not found: {video_input}")
+        with open(video_input, 'rb') as f:
+            return f.read()
+    else:
+        raise ValueError("Video input must be a file path (STRING) or VideoData object")
+
+def get_audio_bytes_from_input(audio_input):
+    """
+    兼容处理音频输入 - 支持文件路径字符串或AudioData对象
+
+    Args:
+        audio_input: 文件路径字符串或AudioData对象
+
+    Returns:
+        bytes: 音频二进制数据
+    """
+    from .video_types import AudioData
+
+    if isinstance(audio_input, AudioData):
+        return audio_input.to_bytes()
+    elif isinstance(audio_input, str):
+        # 如果是文件路径，读取文件内容
+        if not os.path.exists(audio_input):
+            raise ValueError(f"Audio file not found: {audio_input}")
+        with open(audio_input, 'rb') as f:
+            return f.read()
+    else:
+        raise ValueError("Audio input must be a file path (STRING) or AudioData object")
+
+def add_watermark_to_frame(frame, watermark, x, y):
+    """
+    给单个视频帧添加水印
+
+    Args:
+        frame: OpenCV格式的视频帧 (BGR)
+        watermark: numpy数组格式的水印图片 (RGBA)
+        x: 水印X位置
+        y: 水印Y位置
+
+    Returns:
+        添加水印后的帧
+    """
+    frame_height, frame_width = frame.shape[:2]
+    wm_height, wm_width = watermark.shape[:2]
+
+    # 限制水印位置在有效范围内
+    x = max(0, min(x, frame_width - 1))
+    y = max(0, min(y, frame_height - 1))
+
+    # 计算水印区域
+    x_end = min(x + wm_width, frame_width)
+    y_end = min(y + wm_height, frame_height)
+
+    # 调整水印大小以适应边界
+    wm_w_adjusted = x_end - x
+    wm_h_adjusted = y_end - y
+
+    if wm_w_adjusted <= 0 or wm_h_adjusted <= 0:
+        return frame
+
+    watermark_region = watermark[:wm_h_adjusted, :wm_w_adjusted]
+
+    # 分离RGB和Alpha通道
+    if watermark_region.shape[2] == 4:
+        watermark_rgb = watermark_region[:, :, :3]
+        watermark_alpha = watermark_region[:, :, 3] / 255.0
+    else:
+        watermark_rgb = watermark_region
+        watermark_alpha = np.ones((wm_h_adjusted, wm_w_adjusted))
+
+    # 转换RGB到BGR
+    watermark_bgr = cv2.cvtColor(watermark_rgb, cv2.COLOR_RGB2BGR)
+
+    # 融合水印到帧
+    frame_roi = frame[y:y_end, x:x_end]
+
+    for c in range(3):
+        frame_roi[:, :, c] = frame_roi[:, :, c] * (1 - watermark_alpha) + watermark_bgr[:, :, c] * watermark_alpha
+
+    frame[y:y_end, x:x_end] = frame_roi
+
+    return frame

@@ -17,6 +17,11 @@ from .nodes.imagesSave import *
 from .nodes.pipVideo import *
 from .nodes.videoTransition import *
 from .nodes.videoPlayback import *
+from .nodes.getVideoBase64 import *
+from .nodes.unpackVideo import *
+from .nodes.getVideoInfo import *
+from .nodes.addWatermarkToVideo import *
+from .nodes.packVideo import *
 
 NODE_CLASS_MAPPINGS = {
     "Video2Frames": Video2Frames,
@@ -38,6 +43,11 @@ NODE_CLASS_MAPPINGS = {
     "PipVideo": PipVideo,
     "VideoTransition": VideoTransition,
     "VideoPlayback": VideoPlayback,
+    "GetVideoBase64": GetVideoBase64,
+    "UnpackVideo": UnpackVideo,
+    "GetVideoInfo": GetVideoInfo,
+    "AddWatermarkToVideo": AddWatermarkToVideo,
+    "PackVideo": PackVideo,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -61,4 +71,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PipVideo": "🔥PipVideo",
     "VideoTransition": "🔥VideoTransition",
     "VideoPlayback": "🔥VideoPlayback",
+    "GetVideoBase64": "🔥GetVideoBase64",
+    "UnpackVideo": "🔥UnpackVideo",
+    "GetVideoInfo": "🔥GetVideoInfo",
+    "AddWatermarkToVideo": "🔥AddWatermarkToVideo",
+    "PackVideo": "🔥PackVideo",
 }

@@ -1,20 +1,21 @@
 import os
 import subprocess
-from ..func import get_image_size,generate_template_string
+from ..func import get_image_size, generate_template_string, pack_images_to_video_bytes, get_video_bytes_from_input
+from ..video_types import VideoData, video_or_string
 
 class Frames2Video:
- 
+
     # 初始化方法
-    def __init__(self): 
-        pass 
-    
+    def __init__(self):
+        pass
+
     @classmethod
     def INPUT_TYPES(s):
         return {
-            "required": { 
-                "frame_path": ("STRING", {"default": "C:/Users/Desktop",}), 
+            "required": {
+                "frame_path": ("STRING", {"default": "C:/Users/Desktop",}),
                 "fps": ("FLOAT", {
-                    "default": 30, 
+                    "default": 30,
                     "min": 1,
                     "max": 120,
                     "step": 1,
@@ -26,16 +27,17 @@ class Frames2Video:
             },
             "optional":{
                 "audio_path":("STRING",{"default": "C:/Users/audio.mp3",}),
+                "return_video_data": ("BOOLEAN", {"default": False}),
                 }
         }
 
-    RETURN_TYPES = ("STRING","STRING",)
-    RETURN_NAMES = ("frame_path","output_path",)
-    FUNCTION = "frames2video" 
+    RETURN_TYPES = ("STRING", "STRING", "VIDEO")
+    RETURN_NAMES = ("frame_path", "output_path", "video")
+    FUNCTION = "frames2video"
     OUTPUT_NODE = True
     CATEGORY = "🔥FFmpeg" 
 
-    def frames2video(self,frame_path,fps,video_name,output_path,audio_path,device):
+    def frames2video(self, frame_path, fps, video_name, output_path, audio_path="", device="CPU", return_video_data=False):
         try:
             frame_path = os.path.abspath(frame_path).strip()
             output_path = os.path.abspath(output_path).strip()
@@ -45,11 +47,11 @@ class Frames2Video:
                     raise ValueError("audio_path："+audio_path+"不存在（audio_path:"+audio_path+" does not exist）")
             if not os.path.exists(frame_path):
                 raise ValueError("frame_path："+frame_path+"不存在（frame_path:"+frame_path+" does not exist）")
-                
+
             #判断output_path是否是一个目录
             if not os.path.isdir(output_path):
                 raise ValueError("output_path："+output_path+"不是目录（output_path:"+output_path+" is not a directory）")
-            
+
             #output_path =  f"{output_path}\\{video_name}.mp4" # 将输出目录和输出文件名合并为一个输出路径
             output_path =  os.path.join(output_path, f"{video_name}.mp4")
             # 获取输入目录中的所有图像文件
@@ -133,7 +135,23 @@ class Frames2Video:
             else:
                 # 输出标准输出信息
                 print(result.stdout)
+
+            # 如果需要返回VideoData对象
+            video_data = None
+            if return_video_data:
+                try:
+                    with open(output_path, 'rb') as f:
+                        video_bytes = f.read()
+                    video_data = VideoData(video_bytes, {
+                        'fps': float(fps),
+                        'width': width,
+                        'height': height,
+                        'format': 'mp4'
+                    })
+                except Exception as e:
+                    print(f"Warning: Failed to create VideoData: {e}")
+
             frame_path = str(frame_path) # 输出路径为字符串
-            return (frame_path,output_path)
+            return (frame_path, output_path, video_data)
         except Exception as e:
             raise ValueError(e)
