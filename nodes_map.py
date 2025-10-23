@@ -24,6 +24,7 @@ from .nodes.addWatermarkToVideo import *
 from .nodes.packVideo import *
 from .nodes.imageToVideoAPI import *
 from .nodes.loadImageWithAlpha import *
+from .nodes.loadBase64Image import *
 
 NODE_CLASS_MAPPINGS = {
     "Video2Frames": Video2Frames,
@@ -52,6 +53,7 @@ NODE_CLASS_MAPPINGS = {
     "PackVideo": PackVideo,
     "ImageToVideoAPI": ImageToVideoAPI,
     "CombineImageWithAlpha": CombineImageWithAlpha,
+    "LoadBase64Image": LoadBase64Image,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -81,4 +83,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PackVideo": "🔥PackVideo",
     "ImageToVideoAPI": "🔥ImageToVideoAPI",
     "CombineImageWithAlpha": "🔥Combine Image With Alpha",
+    "LoadBase64Image": "🔥Load Base64 Image",
 }
