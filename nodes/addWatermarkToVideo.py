@@ -21,6 +21,7 @@ class AddWatermarkToVideo:
             },
             "optional": {
                 "opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.1}),
+                "crf": ("INT", {"default": 18, "min": 0, "max": 51, "step": 1}),
             },
         }
 
@@ -30,7 +31,7 @@ class AddWatermarkToVideo:
     OUTPUT_NODE = False
     CATEGORY = "🔥FFmpeg/Video"
 
-    def add_watermark(self, video: VideoInput, watermark_image: ImageInput, watermark_width, position_x, position_y, opacity=1.0):
+    def add_watermark(self, video: VideoInput, watermark_image: ImageInput, watermark_width, position_x, position_y, opacity=1.0, crf=18):
         try:
             video_io = io.BytesIO()
             video.save_to(video_io)
@@ -73,7 +74,7 @@ class AddWatermarkToVideo:
                     '-i', watermark_path,
                     '-filter_complex', f'[1:v]scale={watermark_width}:{watermark_height}[wm];[0:v][wm]overlay={position_x}:{position_y}',
                     '-c:v', 'libx264',
-                    '-crf', '0',
+                    '-crf', str(crf),
                     '-preset', 'slow',
                     '-c:a', 'copy',
                     '-y',

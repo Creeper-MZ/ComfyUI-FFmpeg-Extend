@@ -489,7 +489,7 @@ def add_watermark_to_video_bytes(video_bytes, watermark_image, watermark_width, 
                 '-filter_complex',
                 f'[1:v]scale={watermark_width}:-1[wm];[0:v][wm]overlay={position_x}:{position_y}',
                 '-c:v', 'libx264',
-                '-crf', '0',
+                '-crf', '18',
                 '-preset', 'slow',
                 '-c:a', 'copy',
                 '-y',
@@ -613,7 +613,7 @@ def add_watermark_to_video_bytes_pyav(video_bytes, watermark_image, watermark_wi
             output_stream.width = input_stream.width
             output_stream.height = input_stream.height
             output_stream.pix_fmt = 'yuv420p'
-            output_stream.options = {'crf': '0', 'preset': 'slow'}
+            output_stream.options = {'crf': '18', 'preset': 'slow'}
 
             audio_stream = None
             if len(input_container.streams.audio) > 0:
