@@ -18,10 +18,12 @@ from .nodes.pipVideo import *
 from .nodes.videoTransition import *
 from .nodes.videoPlayback import *
 from .nodes.getVideoBase64 import *
-from .nodes.unpackVideo import *
+from .nodes.videoToBase64 import *
 from .nodes.getVideoInfo import *
 from .nodes.addWatermarkToVideo import *
 from .nodes.packVideo import *
+from .nodes.imageToVideoAPI import *
+from .nodes.loadImageWithAlpha import *
 
 NODE_CLASS_MAPPINGS = {
     "Video2Frames": Video2Frames,
@@ -44,13 +46,14 @@ NODE_CLASS_MAPPINGS = {
     "VideoTransition": VideoTransition,
     "VideoPlayback": VideoPlayback,
     "GetVideoBase64": GetVideoBase64,
-    "UnpackVideo": UnpackVideo,
+    "VideoToBase64": VideoToBase64,
     "GetVideoInfo": GetVideoInfo,
     "AddWatermarkToVideo": AddWatermarkToVideo,
     "PackVideo": PackVideo,
+    "ImageToVideoAPI": ImageToVideoAPI,
+    "CombineImageWithAlpha": CombineImageWithAlpha,
 }
 
-# A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
     "Video2Frames": "🔥Video2Frames",
     "Frames2Video": "🔥Frames2Video",
@@ -72,8 +75,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoTransition": "🔥VideoTransition",
     "VideoPlayback": "🔥VideoPlayback",
     "GetVideoBase64": "🔥GetVideoBase64",
-    "UnpackVideo": "🔥UnpackVideo",
+    "VideoToBase64": "🔥VideoToBase64",
     "GetVideoInfo": "🔥GetVideoInfo",
     "AddWatermarkToVideo": "🔥AddWatermarkToVideo",
     "PackVideo": "🔥PackVideo",
+    "ImageToVideoAPI": "🔥ImageToVideoAPI",
+    "CombineImageWithAlpha": "🔥Combine Image With Alpha",
 }

@@ -1,82 +1,78 @@
 import os
-import subprocess
-from ..func import video_type, get_video_bytes_from_input, extract_audio_from_bytes
-from ..video_types import AudioData, video_or_string
+import av
+from comfy_api.input import VideoInput
+
 
 class ExtractAudio:
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "video": (video_or_string, {"default":"C:/Users/Desktop/video.mp4"}),
-                "output_path": ("STRING", {"default":"C:/Users/Desktop/output",}),
-                "audio_format": ([".m4a",".mp3",".wav",".aac",".flac",".wma",".ogg",".ac3",".amr",".aiff",".opus",".m4b",".caf",".dts"], {"default":".m4a",}),
-            },
-            "optional": {
-                "return_audio_data": ("BOOLEAN", {"default": False}),
+                "video": ("VIDEO",),
+                "output_path": ("STRING", {"default": "C:/Users/Desktop/output"}),
+                "audio_format": ([".m4a", ".mp3", ".wav", ".aac", ".flac"], {"default": ".mp3"}),
             },
         }
 
     RETURN_TYPES = ("STRING", "AUDIO")
-    RETURN_NAMES = ("audio_complete_path", "audio")
+    RETURN_NAMES = ("audio_path", "audio")
     FUNCTION = "extract_audio"
     OUTPUT_NODE = True
     CATEGORY = "🔥FFmpeg"
-  
-    def extract_audio(self, video, output_path, audio_format, return_audio_data=False):
+
+    def extract_audio(self, video: VideoInput, output_path, audio_format):
         try:
             output_path = os.path.abspath(output_path).strip()
 
             if not os.path.isdir(output_path):
-                raise ValueError("output_path："+output_path+"不是目录（output_path:"+output_path+" is not a directory）")
+                os.makedirs(output_path, exist_ok=True)
 
-            video_bytes = get_video_bytes_from_input(video)
+            # 使用官方get_components获取audio
+            components = video.get_components()
+            audio = components.audio
 
-            if isinstance(video, str):
-                file_name = os.path.splitext(os.path.basename(video))[0]
-            else:
-                file_name = "audio"
+            if audio is None:
+                raise ValueError("Video has no audio track")
 
-            output_audio_path = os.path.join(output_path, file_name + audio_format)
+            output_audio_path = os.path.join(output_path, f"audio{audio_format}")
 
-            # 支持的音频格式
-            supported_formats = {
-                ".m4a": "m4a",
-                ".mp3": "mp3",
-                ".wav": "wav",
+            # 格式映射
+            codec_map = {
+                ".mp3": "libmp3lame",
                 ".aac": "aac",
+                ".wav": "pcm_s16le",
                 ".flac": "flac",
-                ".wma": "wma",
-                ".ogg": "ogg",
-                ".ac3": "ac3",
-                ".amr": "amr",
-                ".aiff": "aiff",
-                ".opus": "opus",
-                ".m4b": "m4b",
-                ".caf": "caf",
-                ".dts": "dts"
+                ".m4a": "aac"
             }
 
-            if audio_format not in supported_formats:
-                raise ValueError("不支持的音频格式："+audio_format+"(Unsupported audio formats:"+audio_format+")")
+            if audio_format not in codec_map:
+                raise ValueError(f"Unsupported audio format: {audio_format}")
 
-            audio_format_str = supported_formats[audio_format]
+            codec = codec_map[audio_format]
+            container_format = audio_format.lstrip('.')
+            if container_format == "m4a":
+                container_format = "mp4"
 
-            # 提取音频
-            audio_bytes = extract_audio_from_bytes(video_bytes, audio_format_str)
+            # 保存audio使用PyAV
+            waveform = audio['waveform']  # shape: (1, channels, samples)
+            sample_rate = audio['sample_rate']
+            audio_data = waveform.squeeze(0).cpu().contiguous().numpy()
 
-            # 保存音频文件
-            with open(output_audio_path, 'wb') as f:
-                f.write(audio_bytes)
+            print(f"[ExtractAudio] Saving audio to {output_audio_path} (format: {container_format}, codec: {codec})")
+            with av.open(output_audio_path, mode='w', format=container_format) as container:
+                stream = container.add_stream(codec, rate=sample_rate)
+                frame = av.AudioFrame.from_ndarray(
+                    audio_data,
+                    format='fltp',
+                    layout='stereo' if audio_data.shape[0] > 1 else 'mono'
+                )
+                frame.sample_rate = sample_rate
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+                for packet in stream.encode(None):
+                    container.mux(packet)
+            print(f"[ExtractAudio] Audio saved successfully")
 
-            # 如果需要返回AudioData对象
-            audio_data = None
-            if return_audio_data:
-                audio_data = AudioData(audio_bytes, {'format': audio_format_str})
-
-            return (output_audio_path, audio_data)
+            return (output_audio_path, audio)
         except Exception as e:
-            raise ValueError(e)
+            raise ValueError(f"Failed to extract audio: {e}")

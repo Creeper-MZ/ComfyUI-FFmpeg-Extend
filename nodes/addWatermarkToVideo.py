@@ -1,17 +1,14 @@
-"""
-AddWatermarkToVideo 节点 - 给VideoData添加图片水印
-"""
-
+import io
+import tempfile
+import subprocess
+import os
 from PIL import Image
-import numpy as np
-from ..video_types import VideoData
-from ..func import add_watermark_to_video_bytes, tensor2pil
+from comfy_api.input import VideoInput, ImageInput
+from comfy_api.input_impl import VideoFromFile
+from ..func import tensor2pil
 
 
 class AddWatermarkToVideo:
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -33,42 +30,78 @@ class AddWatermarkToVideo:
     OUTPUT_NODE = False
     CATEGORY = "🔥FFmpeg/Video"
 
-    def add_watermark(self, video, watermark_image, watermark_width, position_x, position_y, opacity=1.0):
+    def add_watermark(self, video: VideoInput, watermark_image: ImageInput, watermark_width, position_x, position_y, opacity=1.0):
         try:
-            # 确保输入是VideoData对象
-            if not isinstance(video, VideoData):
-                raise ValueError("Input video must be a VideoData object")
+            video_io = io.BytesIO()
+            video.save_to(video_io)
+            video_io.seek(0)
+            video_bytes = video_io.read()
 
-            # 将IMAGE张量转换为PIL Image
             watermark_pil = tensor2pil(watermark_image)
+            print(f"[AddWatermarkToVideo] Watermark mode: {watermark_pil.mode}, size: {watermark_pil.size}")
 
-            # 应用透明度
+            if watermark_pil.mode != 'RGBA':
+                print(f"[AddWatermarkToVideo] Converting {watermark_pil.mode} to RGBA")
+                watermark_pil = watermark_pil.convert('RGBA')
+
             if opacity < 1.0:
-                # 转换为RGBA以支持透明度
-                watermark_pil = watermark_pil.convert('RGBA')
-                # 获取或创建alpha通道
-                if len(watermark_pil.split()) == 4:
-                    alpha = watermark_pil.split()[3]
-                else:
-                    alpha = Image.new('L', watermark_pil.size, 255)
-                # 应用透明度
-                alpha = Image.new('L', alpha.size, int(255 * opacity))
+                print(f"[AddWatermarkToVideo] Applying opacity: {opacity}")
+                alpha = watermark_pil.split()[3]
+                alpha = Image.eval(alpha, lambda a: int(a * opacity))
                 watermark_pil.putalpha(alpha)
-                watermark_pil = watermark_pil.convert('RGBA')
 
-            # 添加水印
-            output_bytes = add_watermark_to_video_bytes(
-                video.to_bytes(),
-                watermark_pil,
-                watermark_width,
-                position_x,
-                position_y
-            )
+            aspect_ratio = watermark_pil.height / watermark_pil.width
+            watermark_height = int(watermark_width * aspect_ratio)
 
-            # 创建新的VideoData对象
-            video_metadata = video.get_metadata().copy()
-            output_video = VideoData(output_bytes, video_metadata)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_video:
+                tmp_video.write(video_bytes)
+                tmp_video_path = tmp_video.name
 
-            return (output_video,)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_watermark:
+                watermark_pil.save(tmp_watermark.name, 'PNG')
+                watermark_path = tmp_watermark.name
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_output:
+                output_path = tmp_output.name
+
+            try:
+                print(f"[AddWatermarkToVideo] Using FFmpeg to add watermark")
+
+                cmd = [
+                    'ffmpeg',
+                    '-i', tmp_video_path,
+                    '-i', watermark_path,
+                    '-filter_complex', f'[1:v]scale={watermark_width}:{watermark_height}[wm];[0:v][wm]overlay={position_x}:{position_y}',
+                    '-c:v', 'libx264',
+                    '-crf', '0',
+                    '-preset', 'slow',
+                    '-c:a', 'copy',
+                    '-y',
+                    output_path
+                ]
+
+                result = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+                if result.returncode != 0:
+                    print(f"[AddWatermarkToVideo] FFmpeg stderr: {result.stderr.decode('utf-8')}")
+                    raise ValueError(f"FFmpeg error: {result.stderr.decode('utf-8')}")
+
+                print(f"[AddWatermarkToVideo] FFmpeg completed successfully")
+
+                with open(output_path, 'rb') as f:
+                    output_bytes = f.read()
+
+                output_video = VideoFromFile(io.BytesIO(output_bytes))
+
+                return (output_video,)
+
+            finally:
+                for path in [tmp_video_path, watermark_path, output_path]:
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except:
+                            pass
+
         except Exception as e:
             raise ValueError(f"Failed to add watermark to video: {e}")

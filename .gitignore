@@ -1,3 +1,8 @@
 /__pycache__
 .DS_Store
 /.claude
+/nodes/__pycache__
+/nodes/__pycache__
+*.pyc
+/nodes/__pycache__
+*.pyc
